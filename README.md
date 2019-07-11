@@ -24,7 +24,7 @@ git checkout riscv_mcu
 ```
 Download the dependencies by running:
 
-```tensorflow/lite/experimental/micro/tools/make/download_dependencies.sh.```
+```tensorflow/lite/experimental/micro/tools/make/download_dependencies.sh```
 
 Build and Shakthi E-Class compatible Binary using:
 
