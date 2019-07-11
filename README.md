@@ -1,5 +1,5 @@
 | **`Documentation`** |
-|-----------------|
+
 ## Pre-requisites 
 
 Download pre-built RISC-V gnu tools from SiFive:
