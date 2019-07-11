@@ -75,6 +75,50 @@ REGISTER_OP("ExperimentalIgnoreErrorsDataset")
     .Attr("output_shapes: list(shape) >= 1")
     .SetShapeFn(shape_inference::ScalarShape);
 
+REGISTER_OP("ExperimentalMapDataset")
+    .Input("input_dataset: variant")
+    .Input("other_arguments: Targuments")
+    .Output("handle: variant")
+    .Attr("f: func")
+    .Attr("Targuments: list(type) >= 0")
+    .Attr("output_types: list(type) >= 1")
+    .Attr("output_shapes: list(shape) >= 1")
+    .Attr("use_inter_op_parallelism: bool = true")
+    .SetShapeFn(shape_inference::ScalarShape);
+
+REGISTER_OP("ExperimentalMatchingFilesDataset")
+    .Input("patterns: string")
+    .Output("handle: variant")
+    .SetIsStateful()  // TODO(b/65524810): Source dataset ops must be marked
+                      // stateful to inhibit constant folding.
+    .SetShapeFn([](shape_inference::InferenceContext* c) {
+      shape_inference::ShapeHandle unused;
+      // `patterns` must be a scalar or a vector.
+      TF_RETURN_IF_ERROR(c->WithRankAtMost(c->input(0), 1, &unused));
+      return shape_inference::ScalarShape(c);
+    });
+
+REGISTER_OP("ExperimentalNonSerializableDataset")
+    .Input("input_dataset: variant")
+    .Output("handle: variant")
+    .Attr("output_types: list(type) >= 1")
+    .Attr("output_shapes: list(shape) >= 1")
+    .SetShapeFn(shape_inference::ScalarShape);
+
+REGISTER_OP("ExperimentalSleepDataset")
+    .Input("input_dataset: variant")
+    .Input("sleep_microseconds: int64")
+    .Output("handle: variant")
+    .Attr("output_types: list(type) >= 1")
+    .Attr("output_shapes: list(shape) >= 1")
+    .SetShapeFn([](shape_inference::InferenceContext* c) {
+      shape_inference::ShapeHandle unused;
+      // Both inputs are scalar.
+      TF_RETURN_IF_ERROR(c->WithRankAtMost(c->input(0), 0, &unused));
+      TF_RETURN_IF_ERROR(c->WithRankAtMost(c->input(1), 0, &unused));
+      return shape_inference::ScalarShape(c);
+    });
+
 REGISTER_OP("ExperimentalUniqueDataset")
     .Input("input_dataset: variant")
     .Output("handle: variant")
@@ -108,6 +152,22 @@ REGISTER_OP("ExperimentalFunctionBufferingResourceReset")
     .Input("function_buffer_resource: resource")
     .SetShapeFn(shape_inference::UnknownShape);
 
+REGISTER_OP("ExperimentalMaxIntraOpParallelismDataset")
+    .Input("input_dataset: variant")
+    .Input("max_intra_op_parallelism: int64")
+    .Output("handle: variant")
+    .Attr("output_types: list(type) >= 1")
+    .Attr("output_shapes: list(shape) >= 1")
+    .SetShapeFn(shape_inference::ScalarShape);
+
+REGISTER_OP("ExperimentalPrivateThreadPoolDataset")
+    .Input("input_dataset: variant")
+    .Input("num_threads: int64")
+    .Output("handle: variant")
+    .Attr("output_types: list(type) >= 1")
+    .Attr("output_shapes: list(shape) >= 1")
+    .SetShapeFn(shape_inference::ScalarShape);
+
 REGISTER_OP("ExperimentalThreadPoolDataset")
     .Input("input_dataset: variant")
     .Input("thread_pool: resource")
@@ -135,6 +195,32 @@ REGISTER_OP("ExperimentalAssertNextDataset")
       shape_inference::ShapeHandle unused;
       // transformations should be a vector.
       TF_RETURN_IF_ERROR(c->WithRank(c->input(1), 1, &unused));
+      return shape_inference::ScalarShape(c);
+    });
+
+REGISTER_OP("ExperimentalNumaMapAndBatchDataset")
+    .Input("input_dataset: variant")
+    .Input("other_arguments: Targuments")
+    .Input("batch_size: int64")
+    .Input("num_parallel_calls: int64")
+    .Input("drop_remainder: bool")
+    .Output("handle: variant")
+    .Attr("f: func")
+    .Attr("Targuments: list(type) >= 0")
+    .Attr("output_types: list(type) >= 1")
+    .Attr("output_shapes: list(shape) >= 1")
+    .SetShapeFn([](shape_inference::InferenceContext* c) {
+      // Use index from the end to retrieve the Input shapes,
+      // so that to avoid guessing the length of "other_arguments".
+      // batch_size, num_parallel_batches, and drop_remainder are 0-D scalars.
+      shape_inference::ShapeHandle unused;
+      TF_RETURN_IF_ERROR(
+          c->WithRank(c->input(c->num_inputs() - 3), 0, &unused));
+      TF_RETURN_IF_ERROR(
+          c->WithRank(c->input(c->num_inputs() - 2), 0, &unused));
+      TF_RETURN_IF_ERROR(
+          c->WithRank(c->input(c->num_inputs() - 1), 0, &unused));
+
       return shape_inference::ScalarShape(c);
     });
 

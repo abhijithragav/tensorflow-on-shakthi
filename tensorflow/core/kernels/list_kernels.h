@@ -30,6 +30,7 @@ limitations under the License.
 #include "tensorflow/core/kernels/concat_lib.h"
 #include "tensorflow/core/lib/core/coding.h"
 #include "tensorflow/core/lib/core/errors.h"
+#include "tensorflow/core/util/tensor_ops_util.h"
 #include "tensorflow/core/util/util.h"
 
 namespace tensorflow {
@@ -56,6 +57,9 @@ struct TensorList {
   std::vector<Tensor> tensors;
   PartialTensorShape element_shape;
   DataType element_dtype;
+  // The maximum allowed size of `tensors`. Defaults to -1 meaning that the size
+  // of `tensors` is unbounded.
+  int max_num_elements = -1;
 };
 
 Status TensorShapeFromTensor(const Tensor& t, PartialTensorShape* out);
@@ -83,9 +87,9 @@ class TensorListStack : public OpKernel {
                                         DataTypeString(element_dtype_),
                                         " but list elements ",
                                         DataTypeString(l->element_dtype)));
-    OP_REQUIRES(c, l->element_shape.IsFullyDefined(),
-                errors::InvalidArgument("Tried to stack elements from a list "
-                                        "with non-fully-defined shape: ",
+    OP_REQUIRES(c, !l->tensors.empty() || l->element_shape.IsFullyDefined(),
+                errors::InvalidArgument("Tried to stack elements of a empty ",
+                                        "list with non-fully-defined shape: ",
                                         l->element_shape.DebugString()));
     if (num_elements_ != -1) {
       OP_REQUIRES(c, l->tensors.size() == num_elements_,
@@ -94,11 +98,26 @@ class TensorListStack : public OpKernel {
                                           " elements but got a list with ",
                                           l->tensors.size(), " elements."));
     }
+    // Compute the shape of the output tensor.
+    // If `element_shape` is fully-defined it gets used. It is assumed that all
+    // element tensors have the same shape.
+    // If `element_shape` is not fully-defined the shape of the first element
+    // tensor is used and it is checked that all other tensors have the same
+    // shape.
     TensorShape resulting_shape;
-    resulting_shape.AddDim(l->tensors.size());
-    for (TensorShapeDim s : l->element_shape) {
-      resulting_shape.AddDim(s.size);
+    if (!l->element_shape.AsTensorShape(&resulting_shape)) {
+      const Tensor& t = l->tensors[0];
+      resulting_shape = t.shape();
+      for (int i = 1; i < l->tensors.size(); ++i) {
+        const Tensor& t = l->tensors[i];
+        OP_REQUIRES(c, t.shape() == resulting_shape,
+                    errors::InvalidArgument(
+                        "Tried to stack tensors with unequal shapes: ",
+                        resulting_shape.DebugString(), " vs ",
+                        t.shape().DebugString()));
+      }
     }
+    resulting_shape.InsertDim(0, l->tensors.size());
     Tensor* output;
     OP_REQUIRES_OK(c, c->allocate_output(0, resulting_shape, &output));
     if (output->NumElements() == 0) {
@@ -108,12 +127,6 @@ class TensorListStack : public OpKernel {
     ConstMatrixVector inputs_flat;
     inputs_flat.reserve(l->tensors.size());
     for (const auto& t : l->tensors) {
-      OP_REQUIRES(
-          c, l->element_shape.IsCompatibleWith(t.shape()),
-          errors::InvalidArgument(
-              "Tensor with invalid shape in list. List element shape shape: ",
-              l->element_shape.DebugString(),
-              " and tensor shape: ", t.shape().DebugString()));
       inputs_flat.emplace_back(new typename TTypes<T, 2>::ConstMatrix(
           t.shaped<T, 2>({1, t.NumElements()})));
     }
@@ -153,16 +166,38 @@ class TensorListGather : public OpKernel {
                                         DataTypeString(element_dtype_),
                                         " but list elements ",
                                         DataTypeString(l->element_dtype)));
-    OP_REQUIRES(c, l->element_shape.IsFullyDefined(),
-                errors::InvalidArgument("Tried to stack elements from a list "
-                                        "with non-fully-defined shape: ",
-                                        l->element_shape.DebugString()));
     Tensor indices = c->input(1);
+    OP_REQUIRES(c,
+                indices.NumElements() > 0 || l->element_shape.IsFullyDefined(),
+                errors::InvalidArgument("Tried to gather 0-elements from "
+                                        "a list with non-fully-defined shape: ",
+                                        l->element_shape.DebugString()));
+    // Compute the shape of the output tensor.
+    // If `element_shape` is fully-defined it gets used. It is assumed that all
+    // requested tensors have the same shape.
+    // If `element_shape` is not fully-defined the shape of the first requested
+    // tensor is used and it is checked that all other tensors have the same
+    // shape.
     TensorShape resulting_shape;
-    resulting_shape.AddDim(indices.NumElements());
-    for (TensorShapeDim s : l->element_shape) {
-      resulting_shape.AddDim(s.size);
+    if (!l->element_shape.AsTensorShape(&resulting_shape)) {
+      const int i = indices.flat<int32>()(0);
+      OP_REQUIRES(
+          c, i < l->tensors.size(),
+          errors::InvalidArgument("Index ", i, " out o range; list only has ",
+                                  l->tensors.size(), " elements."));
+      const Tensor& t = l->tensors[i];
+      resulting_shape = t.shape();
+      for (int index = 1; index < indices.NumElements(); ++index) {
+        const int i = indices.flat<int32>()(index);
+        const Tensor& t = l->tensors[i];
+        OP_REQUIRES(c, t.shape() == resulting_shape,
+                    errors::InvalidArgument(
+                        "Tried to gather elements with unequal shapes: ",
+                        resulting_shape.DebugString(), " vs ",
+                        t.shape().DebugString()));
+      }
     }
+    resulting_shape.InsertDim(0, indices.NumElements());
     Tensor* output;
     OP_REQUIRES_OK(c, c->allocate_output(0, resulting_shape, &output));
     if (output->NumElements() == 0) {
@@ -178,11 +213,6 @@ class TensorListGather : public OpKernel {
           errors::InvalidArgument("Index ", i, " out o range; list only has ",
                                   l->tensors.size(), " elements."));
       const Tensor& t = l->tensors[i];
-      OP_REQUIRES(c, l->element_shape.IsCompatibleWith(t.shape()),
-                  errors::InvalidArgument(
-                      "Tensor with invalid shape in list. List element shape: ",
-                      l->element_shape.DebugString(),
-                      " and tensor shape: ", t.shape().DebugString()));
       inputs_flat.emplace_back(new typename TTypes<T, 2>::ConstMatrix(
           t.shaped<T, 2>({1, t.NumElements()})));
     }
@@ -328,40 +358,10 @@ Status TensorListBinaryAdd(OpKernelContext* c, const TensorList& a,
   for (int i = 0; i < a.tensors.size(); ++i) {
     const Tensor& a_tensor = a.tensors[i];
     const Tensor& b_tensor = b.tensors[i];
-    if (a_tensor.dtype() == DT_INVALID) {
-      out->tensors.push_back(b_tensor);
-      continue;
-    }
-    if (b_tensor.dtype() == DT_INVALID) {
-      out->tensors.push_back(a_tensor);
-      continue;
-    }
-    if (a_tensor.shape() != b_tensor.shape()) {
-      // TODO(apassos) support broadcasting additions here?
-      return errors::InvalidArgument(
-          "Trying to add two tensors with incompatible element shapes. "
-          "One is ",
-          a_tensor.shape().DebugString(), " and the other is ",
-          b_tensor.shape().DebugString(), " in position ", i);
-    }
     Tensor out_tensor;
     TF_RETURN_IF_ERROR(
-        c->allocate_temp(a_tensor.dtype(), a_tensor.shape(), &out_tensor));
+        BinaryAddTensors<Device>(c, a_tensor, b_tensor, &out_tensor));
     out->tensors.push_back(out_tensor);
-    switch (out_tensor.dtype()) {
-#define DTYPE_CASE(dtype)                                        \
-  case DataTypeToEnum<dtype>::value:                             \
-    out_tensor.flat<dtype>().device(c->eigen_device<Device>()) = \
-        a_tensor.flat<dtype>() + b_tensor.flat<dtype>();         \
-    break;
-
-      TF_CALL_NUMBER_TYPES(DTYPE_CASE)
-
-#undef DTYPE_CASE
-      default:
-        return errors::InvalidArgument("Trying to add unsupported dtype ",
-                                       out_tensor.dtype());
-    }
   }
   return Status::OK();
 }
@@ -374,41 +374,7 @@ Status TensorListZerosLike(OpKernelContext* c, const TensorList& x,
   y->tensors.reserve(x.tensors.size());
   for (const Tensor& t : x.tensors) {
     Tensor out_tensor;
-    AllocatorAttributes attr;
-    if (t.dtype() == DT_VARIANT) {
-      attr.set_on_host(true);
-    }
-    TF_RETURN_IF_ERROR(
-        c->allocate_temp(t.dtype(), t.shape(), &out_tensor, attr));
-    switch (out_tensor.dtype()) {
-#define DTYPE_CASE(dtype)                                        \
-  case DataTypeToEnum<dtype>::value:                             \
-    out_tensor.flat<dtype>().device(c->eigen_device<Device>()) = \
-        out_tensor.flat<dtype>().constant(dtype(0));             \
-    break;
-
-      TF_CALL_POD_TYPES(DTYPE_CASE)
-
-#undef DTYPE_CASE
-
-      case DataTypeToEnum<Variant>::value: {
-        const TensorList* inner_x = t.scalar<Variant>()().get<TensorList>();
-        if (inner_x == nullptr) {
-          return errors::InvalidArgument("Input handle is not a list. Saw: '",
-                                         t.scalar<Variant>()().DebugString(),
-                                         "'");
-        }
-        TensorList inner_y;
-        TF_RETURN_IF_ERROR(TensorListZerosLike<Device>(c, *inner_x, &inner_y));
-        out_tensor.scalar<Variant>()() = std::move(inner_y);
-        break;
-      }
-
-      default:
-        return errors::InvalidArgument(
-            "Trying to compute zeros_like for unsupported dtype ",
-            DataTypeString(out_tensor.dtype()));
-    }
+    TF_RETURN_IF_ERROR(ZerosLikeTensor<Device>(c, t, &out_tensor));
     y->tensors.emplace_back(out_tensor);
   }
   return Status::OK();

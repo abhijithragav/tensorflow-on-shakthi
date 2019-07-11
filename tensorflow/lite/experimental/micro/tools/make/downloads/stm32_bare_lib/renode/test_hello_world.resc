@@ -1,0 +1,23 @@
+using sysbus
+
+mach create
+machine LoadPlatformDescription @platforms/cpus/stm32f103.repl
+
+# These lines are needed to show the results of DebugLog calls in the output.
+machine LoadPlatformDescriptionFromString "uartSemihosting: UART.SemihostingUart @ cpu"
+showAnalyzer cpu.uartSemihosting Antmicro.Renode.Analyzers.LoggingUartAnalyzer
+
+$bin?=@/stm32_bare_lib/gen/elf/examples/hello_world.elf
+
+logFile @/tmp/renode_bluepill_log.txt
+
+macro reset
+"""
+    sysbus LoadELF $bin
+"""
+
+runMacro $reset
+
+emulation RunFor @1
+
+quit

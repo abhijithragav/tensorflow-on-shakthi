@@ -1,0 +1,13 @@
+diff --git a/tensorflow/lite/experimental/micro/tools/make/Makefile b/tensorflow/lite/experimental/micro/tools/make/Makefile
+index 53cf4178c1..0acfcd32e7 100644
+--- a/tensorflow/lite/experimental/micro/tools/make/Makefile
++++ b/tensorflow/lite/experimental/micro/tools/make/Makefile
+@@ -59,7 +59,7 @@ tensorflow/lite/experimental/micro/examples/micro_speech/micro_speech_test.cc \
+ tensorflow/lite/experimental/micro/examples/micro_speech/tiny_conv_model_data.cc \
+ tensorflow/lite/experimental/micro/examples/micro_speech/no_features_data.cc \
+ tensorflow/lite/experimental/micro/examples/micro_speech/yes_features_data.cc \
+-tensorflow/lite/experimental/micro/examples/micro_speech/up_features_data.cc
++
+ 
+ # Test binary for the microcontroller speech model.
+ PREPROCESSOR_TEST_SRCS := \
