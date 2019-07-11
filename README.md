@@ -23,9 +23,11 @@ git clone https://github.com/abhijithragav/tensorflow-on-shakthi.git && cd tenso
 git checkout riscv_mcu
 ```
 Download the dependencies by running:
+
 ```tensorflow/lite/experimental/micro/tools/make/download_dependencies.sh.```
 
 Build and Shakthi E-Class compatible Binary using:
+
 ```make -f tensorflow/lite/experimental/micro/tools/make/Makefile TARGET=riscv32_mcu```
 
 ## Testing the Binary on Shakthi E-Class simulator
